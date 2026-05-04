@@ -332,7 +332,10 @@ impl Simulator {
 
         let mut i = 0;
         while i < self.active_orders.len() {
-            let order = &mut self.active_orders[i];
+            //let order = &mut self.active_orders[i];
+
+            let side = self.active_orders[i].side;
+            let price = self.active_orders[i].price;
 
             // Only process orders on the same side as the resting liquidity
             let resting_side = match trade.aggressor {
@@ -348,7 +351,7 @@ impl Simulator {
                 }
             };
 
-            if order.side != resting_side || order.price != trade.price {
+            if side != resting_side || price != trade.price {
                 i += 1;
                 continue;
             }
@@ -357,6 +360,7 @@ impl Simulator {
             match self.config.queue_model {
                 QueueModel::Fifo => {
                     // Deplete queue ahead
+                    let order = &mut self.active_orders[i];
                     order.queue_ahead -= trade.qty.min(order.queue_ahead);
 
                     if order.queue_ahead <= 0 {
@@ -364,7 +368,7 @@ impl Simulator {
                         let trade_remaining = trade.qty - consumption.qty_consumed.min(trade.qty);
                         let can_fill = order.remaining_qty().min(trade_remaining);
                         
-                        let fill_qty = self.position_limit_qty(order.side, can_fill);
+                        let fill_qty = self.position_limit_qty(side, can_fill);
                         
                         if fill_qty > 0 {
                             let mut order = self.active_orders.swap_remove(i);
@@ -378,15 +382,16 @@ impl Simulator {
                     }
                 }
                 QueueModel::ProRata(share) => {
+                    let order = &mut self.active_orders[i];
                     let our_fill = ((trade.qty as f64) * share).floor() as Qty;
                     let fill_qty = our_fill
                         .min(order.remaining_qty())
                         .max(0);
-                    let fill_qty = self.position_limit_qty(order.side, fill_qty);
+                    let fill_qty = self.position_limit_qty(side, fill_qty);
 
                     if fill_qty > 0 {
                         let mut order = self.active_orders.swap_remove(i);
-                        self.record_fill(&mut order, ts, order.price, fill_qty, true);
+                        self.record_fill(&mut order, ts, price, fill_qty, true);
                         if order.remaining_qty() > 0 && !order.is_terminal() {
                             self.active_orders.push(order);
                         }
@@ -394,6 +399,8 @@ impl Simulator {
                     }
                 }
                 QueueModel::TradeThrough => {
+                    let order = &mut self.active_orders[i];
+                    let remaining_quantity = order.remaining_qty();
                     // Only fill if trade price is strictly through our level
                     let through = match order.side {
                         Side::Buy => trade.price < order.price,
@@ -401,10 +408,10 @@ impl Simulator {
                     };
 
                     if through {
-                        let fill_qty = self.position_limit_qty(order.side, order.remaining_qty());
+                        let fill_qty = self.position_limit_qty(side, remaining_quantity);
                         if fill_qty > 0 {
                             let mut order = self.active_orders.swap_remove(i);
-                            self.record_fill(&mut order, ts, order.price, fill_qty, true);
+                            self.record_fill(&mut order, ts, price, fill_qty, true);
                             if order.remaining_qty() > 0 && !order.is_terminal() {
                                 self.active_orders.push(order);
                             }
