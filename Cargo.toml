@@ -1,0 +1,10 @@
+[package]
+name = "execution-backtest"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+polars = { version = "0.53.0", features = ["lazy", "parquet", "csv", "is_in", "dtype-datetime", "dtype-full"] }
+serde = { version = "1.0.228", features = ["derive"] }
+thiserror = "2.0.18"
+tracing = "0.1.44"
