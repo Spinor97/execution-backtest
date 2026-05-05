@@ -134,8 +134,8 @@ pub struct Feed {
     pub trade_sides: Vec<i8>,        // +1 buy, -1 sell, 0 unknown
 
     // Metadata
-    len: usize,
-    cursor: usize,
+    pub(crate) len: usize,
+    pub(crate) cursor: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -649,4 +649,269 @@ fn infer_trade_sides(
     }
 
     sides
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    // use exec_sim::feed::*;
+    // use exec_sim::event::*;
+    // use exec_sim::types::*;
+
+    /// Helper to create a small test feed in memory.
+    fn make_test_feed(n_quotes: usize, n_trades: usize) -> Feed {
+        let total = n_quotes + n_trades;
+        let mut timestamps = Vec::with_capacity(total);
+        let mut msg_types = Vec::with_capacity(total);
+        let mut bid_prices = Vec::with_capacity(total);
+        let mut bid_qtys = Vec::with_capacity(total);
+        let mut ask_prices = Vec::with_capacity(total);
+        let mut ask_qtys = Vec::with_capacity(total);
+        let mut trade_prices = Vec::with_capacity(total);
+        let mut trade_qtys = Vec::with_capacity(total);
+        let mut trade_sides = Vec::with_capacity(total);
+
+        let mut ts = 1_000_000i64;
+
+        // Interleave: quote, quote, trade, quote, quote, trade, ...
+        let mut trade_count = 0;
+        let mut quote_count = 0;
+
+        for i in 0..total {
+            ts += 100;
+            timestamps.push(ts);
+
+            let is_trade = (i % 5 == 4) && trade_count < n_trades;
+
+            if is_trade {
+                msg_types.push(MsgType::Trade);
+                bid_prices.push(10000);
+                bid_qtys.push(0);
+                ask_prices.push(10002);
+                ask_qtys.push(0);
+                trade_prices.push(10002);
+                trade_qtys.push(100);
+                trade_sides.push(1); // buy aggressor
+                trade_count += 1;
+            } else if quote_count < n_quotes {
+                msg_types.push(MsgType::Quote);
+                bid_prices.push(10000 + (i as i64 % 5));
+                bid_qtys.push(200);
+                ask_prices.push(10002 + (i as i64 % 5));
+                ask_qtys.push(150);
+                trade_prices.push(0);
+                trade_qtys.push(0);
+                trade_sides.push(0);
+                quote_count += 1;
+            } else {
+                // Fill remaining with trades
+                msg_types.push(MsgType::Trade);
+                bid_prices.push(10000);
+                bid_qtys.push(0);
+                ask_prices.push(10002);
+                ask_qtys.push(0);
+                trade_prices.push(10000);
+                trade_qtys.push(50);
+                trade_sides.push(-1);
+                trade_count += 1;
+            }
+        }
+
+        Feed {
+            timestamps,
+            msg_types,
+            bid_prices,
+            bid_qtys,
+            ask_prices,
+            ask_qtys,
+            trade_prices,
+            trade_qtys,
+            trade_sides,
+            len: total,
+            cursor: 0,
+        }
+    }
+
+    #[test]
+    fn test_feed_length() {
+        let feed = make_test_feed(80, 20);
+        assert_eq!(feed.len(), 100);
+        assert!(!feed.is_empty());
+    }
+
+    #[test]
+    fn test_feed_counts() {
+        let feed = make_test_feed(80, 20);
+        assert_eq!(feed.quote_count(), 80);
+        assert_eq!(feed.trade_count(), 20);
+    }
+
+    #[test]
+    fn test_feed_iteration() {
+        let mut feed = make_test_feed(80, 20);
+        let mut count = 0;
+        while feed.next_event().is_some() {
+            count += 1;
+        }
+        assert_eq!(count, 100);
+        assert_eq!(feed.remaining(), 0);
+    }
+
+    #[test]
+    fn test_feed_iterator_trait() {
+        let feed = make_test_feed(10, 5);
+        let events: Vec<_> = feed.collect();
+        assert_eq!(events.len(), 15);
+    }
+
+    #[test]
+    fn test_feed_exact_size_iterator() {
+        let feed = make_test_feed(10, 5);
+        assert_eq!(feed.len(), 15);
+    }
+
+    #[test]
+    fn test_feed_reset() {
+        let mut feed = make_test_feed(10, 5);
+
+        // Consume all
+        while feed.next_event().is_some() {}
+        assert_eq!(feed.remaining(), 0);
+
+        // Reset
+        feed.reset();
+        assert_eq!(feed.remaining(), 15);
+
+        // Can iterate again
+        let first = feed.next_event().unwrap();
+        assert!(first.is_quote() || first.is_trade());
+    }
+
+    #[test]
+    fn test_feed_peek_ts() {
+        let mut feed = make_test_feed(10, 5);
+        let first_ts = feed.peek_ts().unwrap();
+
+        // Peek doesn't advance
+        assert_eq!(feed.peek_ts().unwrap(), first_ts);
+        assert_eq!(feed.remaining(), 15);
+
+        // Next advances
+        let event = feed.next_event().unwrap();
+        assert_eq!(event.timestamp(), first_ts);
+        assert_eq!(feed.remaining(), 14);
+    }
+
+    #[test]
+    fn test_feed_peek_event() {
+        let mut feed = make_test_feed(10, 5);
+        let peeked = feed.peek_event().unwrap();
+        let next = feed.next_event().unwrap();
+        assert_eq!(peeked.timestamp(), next.timestamp());
+    }
+
+    #[test]
+    fn test_feed_seek_to() {
+        let mut feed = make_test_feed(100, 25);
+
+        // All timestamps start at 1_000_100 and increment by 100
+        // So event at index i has ts = 1_000_100 + i*100
+        feed.seek_to(1_000_100 + 50 * 100); // seek to index 50
+
+        let event = feed.next_event().unwrap();
+        assert!(event.timestamp() >= 1_000_100 + 50 * 100);
+    }
+
+    #[test]
+    fn test_feed_seek_to_beginning() {
+        let mut feed = make_test_feed(10, 5);
+        feed.seek_to(0); // before all events
+        assert_eq!(feed.remaining(), 15);
+    }
+
+    #[test]
+    fn test_feed_seek_to_end() {
+        let mut feed = make_test_feed(10, 5);
+        feed.seek_to(i64::MAX); // after all events
+        assert_eq!(feed.remaining(), 0);
+        assert!(feed.next_event().is_none());
+    }
+
+    #[test]
+    fn test_feed_time_range() {
+        let feed = make_test_feed(10, 5);
+        let (start, end) = feed.time_range().unwrap();
+        assert!(start < end);
+        assert_eq!(start, 1_000_100);
+        assert_eq!(end, 1_000_100 + 14 * 100);
+    }
+
+    #[test]
+    fn test_feed_memory_bytes() {
+        let feed = make_test_feed(100, 25);
+        let bytes = feed.memory_bytes();
+        // 125 rows * (7*8 + 2*1) = 125 * 58 = 7250
+        assert_eq!(bytes, 125 * (7 * 8 + 2 * 1));
+    }
+
+    #[test]
+    fn test_feed_timestamps_monotonic() {
+        let mut feed = make_test_feed(80, 20);
+        let mut prev_ts = 0i64;
+        while let Some(event) = feed.next_event() {
+            assert!(event.timestamp() >= prev_ts, "Timestamps must be non-decreasing");
+            prev_ts = event.timestamp();
+        }
+    }
+
+    #[test]
+    fn test_feed_trade_event_fields() {
+        let mut feed = make_test_feed(4, 1);
+        // Trades appear at index 4 in our helper (every 5th event)
+        let mut trade_found = false;
+        while let Some(event) = feed.next_event() {
+            if let MarketEvent::Trade(t) = event {
+                assert!(t.qty > 0);
+                assert!(t.price > 0);
+                trade_found = true;
+            }
+        }
+        assert!(trade_found);
+    }
+
+    #[test]
+    fn test_feed_quote_event_fields() {
+        let mut feed = make_test_feed(5, 0);
+        while let Some(event) = feed.next_event() {
+            if let MarketEvent::Quote(q) = event {
+                assert!(q.bid_price > 0);
+                assert!(q.ask_price > q.bid_price);
+                assert!(q.bid_qty > 0);
+                assert!(q.ask_qty > 0);
+            }
+        }
+    }
+
+    #[test]
+    fn test_empty_feed() {
+        let feed = Feed {
+            timestamps: vec![],
+            msg_types: vec![],
+            bid_prices: vec![],
+            bid_qtys: vec![],
+            ask_prices: vec![],
+            ask_qtys: vec![],
+            trade_prices: vec![],
+            trade_qtys: vec![],
+            trade_sides: vec![],
+            len: 0,
+            cursor: 0,
+        };
+
+        assert!(feed.is_empty());
+        assert_eq!(feed.len(), 0);
+        assert_eq!(feed.remaining(), 0);
+        assert!(feed.time_range().is_none());
+    }
 }
