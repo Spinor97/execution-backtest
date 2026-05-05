@@ -6,3 +6,5 @@ pub mod book;
 pub mod feed;
 pub mod sim;
 pub mod strategy;
+#[cfg(test)]
+pub mod tests;

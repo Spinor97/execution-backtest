@@ -36,7 +36,7 @@ pub struct SimConfig {
 }
 
 /// How to model queue position.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum QueueModel {
     /// Assume we join at the back of the queue when our order arrives.
     /// Fill only after queue_ahead is fully consumed.
@@ -321,9 +321,10 @@ impl Simulator {
                 } else {
                     // Order fully filled or terminal
                 }
-            } else {
-                i += 1;
-            }
+            } 
+            
+            i += 1;
+            
         }
     }
 
@@ -351,7 +352,7 @@ impl Simulator {
                 }
             };
 
-            if side != resting_side || price != trade.price {
+            if (side != resting_side || price != trade.price) && self.config.queue_model != QueueModel::TradeThrough {
                 i += 1;
                 continue;
             }
@@ -395,7 +396,6 @@ impl Simulator {
                         if order.remaining_qty() > 0 && !order.is_terminal() {
                             self.active_orders.push(order);
                         }
-                        continue;
                     }
                 }
                 QueueModel::TradeThrough => {
