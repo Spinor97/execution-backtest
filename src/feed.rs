@@ -134,8 +134,8 @@ pub struct Feed {
     pub trade_sides: Vec<i8>,        // +1 buy, -1 sell, 0 unknown
 
     // Metadata
-    len: usize,
-    cursor: usize,
+    pub len: usize,
+    pub cursor: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
